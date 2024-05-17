@@ -1,0 +1,346 @@
+---
+title: "ERCOT Time Series Exploratory Data Analysis"
+author: "Ayan Sarkar"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+Load Relevent Libraries
+```{r}
+library(dplyr)
+library(pacman)
+library(ggplot2)
+library(DescTools)
+library(glmnet)
+library(tidyr)
+library(knitr)
+library(tinytex)
+library(lubridate)
+library(scales)
+library(forecast)
+```
+
+### Set Working Directory & load data
+
+```{r}
+# Set the working directory
+directory <- setwd('/Users/ayansarkar/Desktop/ERCOT')
+setwd('/Users/ayansarkar/Desktop/ERCOT')
+```
+
+
+## Load in & Clean Data to obtain system-wide Megawatt (MW) Load Consumption by Hour 
+```{r}
+# Get a list of CSV files in the directory
+csv_files <- list.files(path = directory, pattern = "\\.csv$", full.names = TRUE)
+# Extract numeric part from each filename
+numeric_part <- as.integer(gsub("\\D", "", basename(csv_files)))
+# Sort filenames based on the numeric part
+sorted_files <- csv_files[order(numeric_part)]
+# Initialize a list to store DataFrames
+dataframes <- list()
+# Read each CSV file and store them in a list with names
+for (i in seq_along(sorted_files)) {
+  df <- read.csv(sorted_files[i])
+  dataframes[[paste0("df", i)]] <- df
+}
+# Subset to maintain only whole-system load
+for (i in seq_along(dataframes)) {
+  # Subset the DataFrame to keep only the first and last column
+  dataframes[[i]] <- dataframes[[i]][, c(1, ncol(dataframes[[i]]))]
+}
+
+```
+
+
+## Standaridize Variable Names
+```{r}
+#Pull out dataframes from large list
+df1 <- dataframes[[1]]
+df2 <- dataframes[[2]]
+df3 <- dataframes[[3]]
+df4 <- dataframes[[4]]
+df5 <- dataframes[[5]]
+df6 <- dataframes[[6]]
+df7 <- dataframes[[7]]
+df8 <- dataframes[[8]]
+df9 <- dataframes[[9]]
+df10 <- dataframes[[10]]
+
+# Rename the column "Hour_End" to "HourEnding" in each data frame
+df1 <- rename(df1, HourEnding = Hour_End)
+df2 <- rename(df2, HourEnding = Hour_End)
+df3 <- rename(df3, HourEnding = Hour.Ending)
+df7 <- rename(df7, HourEnding = Hour.Ending)
+df8 <- rename(df8, HourEnding = Hour.Ending)
+df9 <- rename(df9, HourEnding = Hour.Ending)
+df10 <- rename(df10, HourEnding = Hour.Ending)
+
+load_df <- rbind(df1, df2, df3, df4, df5, df6, df7, df8, df9, df10)
+
+```
+
+## Rename variable names for clarity & format data types
+```{r}
+# Set to timedate objects
+load_df_clean <- load_df %>%
+  mutate(
+    HourEnding = mdy_hm(HourEnding)
+  )
+#Rename for clarity
+load_df_clean <- load_df_clean %>%
+  rename(ercot_mw = ERCOT, Datetime = HourEnding) %>%
+  select(Datetime, ercot_mw, everything())
+
+# Subset out non-NA entries
+load_df_clean <- load_df_clean %>%
+  mutate(
+    ercot_mw = as.integer(gsub(",", "", ercot_mw, fixed = TRUE))
+  )
+load_df_clean <- load_df_clean[1:81791, ]
+```
+
+
+## Descriptive Statistics
+```{r}
+print(summary(load_df_clean$ercot_mw))
+```
+
+## Plot
+```{r}
+theme_set(theme_minimal())
+# Plot
+ggplot(load_df_clean, aes(x = Datetime, y = ercot_mw)) +
+  geom_line(color = "blue") +
+  labs(title = "ERCOT Time Plot (2015-2024)",
+       y = "Consumption [MW]",
+       x = "Date") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+Figure A. illustrates yearly seasonality as expected. We can also even begin to observe monthly seasonality within single years, peaking in summer and winter months, due to heating and cooling demand. The plot does demonstrate a steadily growing trend in energy consumption in recent years, with newer and higher peaks.
+
+## Generate variables to enable further time-trend analysis
+```{r}
+# Extract year, month, week, hour, day, and year_month as seprate variables
+load_df_clean <- load_df_clean %>%
+  mutate(
+    year = year(Datetime),
+    month = month(Datetime),
+    week = week(Datetime),
+    hour = hour(Datetime),
+    day = wday(Datetime, label = TRUE),
+    day_str = format(Datetime, "%a"),
+    year_month = paste(year(Datetime), month(Datetime), sep = "_")
+  )
+
+```
+
+## Plot Monthly Seasonal Trends
+```{r}
+# Defining colors palette
+set.seed(42)
+df_plot <- load_df_clean %>%
+  na.omit() %>%
+  group_by(month, year) %>%
+  summarise(ercot_mw = mean(ercot_mw, na.rm = TRUE)) %>%
+  ungroup()
+
+years <- unique(df_plot$year)
+colors <- scales::hue_pal()(length(years))
+
+# Plot
+ggplot(df_plot, aes(x = month, y = ercot_mw, color = as.factor(year))) +
+  geom_line() +
+  geom_text(data = subset(df_plot, !duplicated(year)), aes(label = year, color = as.factor(year)), 
+            vjust = -1, hjust = 10, position = position_nudge(y = -200)) +  # Adjust the position here
+  scale_color_manual(values = colors) +
+  labs(title = "Seasonal Plot - Yearly Consumption",
+       x = "Month",
+       y = "Consumption [MW]") +
+  theme_minimal() +
+  scale_x_continuous(breaks = seq(2, 12, by = 2))
+
+```
+By viewing MW consumption trends grouped by year over the months, we can confirm our expectations of Summer peaks in Texas, with another peak in Winter.
+
+## Plot Weekly Seasonal Trends
+```{r}
+# Defining weekly seasonal dataframe
+set.seed(42)
+df_plot <- load_df_clean %>%
+  na.omit() %>%
+  group_by(month, day, day_str) %>%
+  summarise(ercot_mw = mean(ercot_mw, na.rm = TRUE)) %>%
+  ungroup()
+
+months <- unique(df_plot$month)
+
+# Correcting the number of colors
+colors <- scales::hue_pal()(length(months))
+
+df_plot$day_str <- factor(df_plot$day_str, levels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
+
+# Plot
+ggplot(df_plot, aes(x = day_str, y = ercot_mw, color = as.factor(month))) +
+  geom_line(data = subset(df_plot, month != min(month)), aes(group = month), size = 1) +
+  geom_text(data = subset(df_plot, !duplicated(month)), aes(label = month, color = as.factor(month)), 
+            vjust = -0.5, hjust = 15, position = position_nudge(y = 200)) +
+  scale_color_manual(values = colors) +
+  labs(title = "Seasonal Plot - Weekly Consumption",
+       x = "Day",
+       y = "Consumption [MW]") +
+  theme_minimal()
+
+
+```
+This plot enables us to capture the monthly time trends as well as daily trends. We see how energy consumption changes throughout the week for all months. 
+
+## Plot Daily Seasonal Trends
+```{r}
+# Defining daily seasonal dataframe
+df_plot <- load_df_clean %>%
+  na.omit() %>%
+  group_by(hour, day_str) %>%
+  summarise(ercot_mw = mean(ercot_mw, na.rm = TRUE)) %>%
+  ungroup()
+
+# Plot trends
+ggplot(df_plot, aes(x = hour, y = ercot_mw, color = day_str)) +
+  geom_line() +
+  scale_x_continuous(breaks = seq(0, 23, by = 1)) +
+  labs(title = "Seasonal Plot - Daily Consumption",
+       x = "Hour",
+       y = "Consumption [MW]")
+
+```
+We can observe a relative peak in the middle of the day (from 10 am to 2 pm) after a steep ramping, then a relative minima (from 2 pm to 6 pm) and another peak (from 6 pm to 8 pm). This plot also shows the difference in consumptions from weekends and other days.
+
+## Total Consumption
+```{r}
+# Plot box plot
+ggplot(load_df_clean, aes(x = factor(1), y = ercot_mw, fill = factor(1))) +
+  geom_boxplot() +
+  labs(x = "Consumption [MW]", title = "Boxplot - Consumption Distribution") +
+  theme_minimal() +
+  coord_flip() +
+  theme(legend.position = "none")
+
+```
+This plot simply illustrates a guassian-like distribution of consumption (MW) with a slight right skew and large right tail.
+
+## Monthly Consumption
+```{r}
+ggplot(load_df_plot, aes(x = factor(year_month), y = ercot_mw, fill = factor(year_month))) +
+  geom_boxplot() +
+  labs(
+    title = "Boxplot Year Month Distribution",
+    x = "Year Month",
+    y = "Consumption [MW]"
+  ) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        legend.position = "none")
+
+```
+This plot is interestince, since we can observe how summers seem to be experiecing higher and higher energy consumption demand from year to year (months 5-7).
+
+## Daily Distribution
+```{r}
+# Sort the data by day
+load_df_plot <- load_df_clean %>%
+  arrange(day)
+
+load_df_plot$day_str <- factor(load_df_plot$day_str, levels = c("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"))
+
+# Plot boxplot with different colors for box plot bodies
+ggplot(load_df_plot, aes(x = factor(day_str), y = ercot_mw, fill = factor(day_str))) +
+  geom_boxplot() +
+  labs(
+    title = "Boxplot Day Distribution",
+    x = "Day of week",
+    y = "MW"
+  ) +
+  theme(legend.position = "none")
+
+
+```
+This is also a fairly straightforward plot that simply shows how thefference in energy consumption during the weekend.
+
+## Hourly Distribution
+```{r}
+# Plot boxplot
+ggplot(load_df_clean, aes(x = factor(hour), y = ercot_mw, fill = factor(hour))) +
+  geom_boxplot() +
+  labs(
+    title = "Boxplot Hour Distribution",
+    x = "Hour",
+    y = "MW"
+  ) +
+  theme(legend.position = "none")
+
+```
+This plot is insightful, since not only does it show us what we may have expected with regards to daily seasonailty, but also indicates, via the large amount of outliers, that the data is influenced by exogneous factors such as temperature or humidity. This results in extreme values that daily seasonality iyself does not capture.
+
+## Time Series Distribution
+
+Here, I explore both types of decompsition; Additive & Multiplicative. 
+
+Addititive:
+y_t = S_t + T_t + R_t
+
+Multiplicative:
+y_t = S_t x T_t x R_t
+
+S_t: Seasonal Component
+T_t: Trend Cycle
+R_t: Remainder
+
+By seperating out the seasonality, we can gain a better sense of the behavior of the data overall.
+In the second plot for just the Month of December, we can even observe daily seasonal trends in energy consumption as well.
+
+```{r}
+# Filter data for the year 2020
+df_plot <- load_df_clean %>%
+  filter(year(Datetime) == 2020) %>%
+  distinct(Datetime, .keep_all = TRUE) %>%
+  arrange(Datetime)
+
+# Additive Decomposition
+result_add <- decompose(ts(df_plot$ercot_mw, frequency = 24*7), type = "additive")
+
+# Multiplicative Decomposition
+result_mul <- decompose(ts(df_plot$ercot_mw, frequency = 24*7), type = "multiplicative")
+
+# Plot with colors
+plot(result_add, col = "blue")
+plot(result_mul, col = "red")
+
+```
+
+## December Time Trends
+```{r}
+# Filter data for the year 2017 and month 12
+df_plot <- load_df_clean %>%
+  filter(year(Datetime) == 2020, month(Datetime) == 3) %>%
+  distinct(Datetime, .keep_all = TRUE) %>%
+  arrange(Datetime)
+
+# Additive Decomposition
+result_add <- decompose(ts(df_plot$ercot_mw, frequency = 24*7), type = "additive")
+
+# Multiplicative Decomposition
+result_mul <- decompose(ts(df_plot$ercot_mw, frequency = 24*7), type = "multiplicative")
+
+# Plot with colors
+plot(result_add, col = "blue")
+plot(result_mul, col = "red")
+
+```
+
+
+
+
