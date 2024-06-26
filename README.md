@@ -54,7 +54,7 @@ In the second plot for just the Month of December, we can even observe daily sea
 
 ##2020
 
-![Alt Text](https://github.com/A-Sarkar18/ERCOT-Exploratory-Data-Analysis/blob/main/figures/ERCOT%20MW%20Consumption%20Multiplicative%20Decomposition%202020.png)
+![Alt Text](https://github.com/A-Sarkar18/ERCOT-Exploratory-Data-Analysis/blob/main/figures/ERCOT%20MW%20Consumption%20Additive%20Decomposition%202020.png.png)
 
 ![Alt Text](https://github.com/A-Sarkar18/ERCOT-Exploratory-Data-Analysis/blob/main/figures/ERCOT%20MW%20Consumption%20Multiplicative%20Decomposition%202020.png)
 
