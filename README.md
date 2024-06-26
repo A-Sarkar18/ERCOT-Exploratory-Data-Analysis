@@ -31,7 +31,9 @@ Multiplicative:
 y_t = S_t x T_t x R_t
 
 S_t: Seasonal Component
+
 T_t: Trend Cycle
+
 R_t: Remainder
 
 By seperating out the seasonality, we can gain a better sense of the behavior of the data overall.
